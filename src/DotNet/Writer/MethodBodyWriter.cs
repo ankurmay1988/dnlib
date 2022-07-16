@@ -61,6 +61,29 @@ namespace dnlib.DotNet.Writer {
 		/// Constructor
 		/// </summary>
 		/// <param name="helper">Helps this instance</param>
+		/// <param name="method">The method</param>
+		public MethodBodyWriter(ITokenProvider helper, MethodDef method)
+			: this(helper, method, false) {
+		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="helper">Helps this instance</param>
+		/// <param name="method">The method</param>
+		/// <param name="keepMaxStack">Keep the original max stack value that has been initialized
+		/// in <paramref name="method"/></param>
+		public MethodBodyWriter(ITokenProvider helper, MethodDef method, bool keepMaxStack)
+			: base(method.Body.Instructions, method.Body.ExceptionHandlers) {
+			this.helper = helper;
+			cilBody = method.Body;
+			this.keepMaxStack = keepMaxStack;
+		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="helper">Helps this instance</param>
 		/// <param name="cilBody">The CIL method body</param>
 		public MethodBodyWriter(ITokenProvider helper, CilBody cilBody)
 			: this(helper, cilBody, false) {
@@ -240,9 +263,9 @@ namespace dnlib.DotNet.Writer {
 				writer.WriteUInt32(offs1);
 				writer.WriteUInt32(offs2 - offs1);
 
-				if (eh.HandlerType == ExceptionHandlerType.Catch)
+				if (eh.IsCatch)
 					writer.WriteUInt32(helper.GetToken(eh.CatchType).Raw);
-				else if (eh.HandlerType == ExceptionHandlerType.Filter)
+				else if (eh.IsFilter)
 					writer.WriteUInt32(GetOffset2(eh.FilterStart));
 				else
 					writer.WriteInt32(0);
@@ -285,9 +308,9 @@ namespace dnlib.DotNet.Writer {
 				writer.WriteUInt16((ushort)offs1);
 				writer.WriteByte((byte)(offs2 - offs1));
 
-				if (eh.HandlerType == ExceptionHandlerType.Catch)
+				if (eh.IsCatch)
 					writer.WriteUInt32(helper.GetToken(eh.CatchType).Raw);
-				else if (eh.HandlerType == ExceptionHandlerType.Filter)
+				else if (eh.IsFilter)
 					writer.WriteUInt32(GetOffset2(eh.FilterStart));
 				else
 					writer.WriteInt32(0);

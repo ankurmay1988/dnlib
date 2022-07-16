@@ -1296,8 +1296,12 @@ namespace dnlib.DotNet {
 			// If we create a partial stream starting from rva, then position will be 0 and always
 			// 4-byte aligned. All fat method bodies should be 4-byte aligned, but the CLR doesn't
 			// seem to verify it. We must parse the method exactly the way the CLR parses it.
+			var offset = metadata.PEImage.ToFileOffset(rva);
+			if (offset == 0)
+				return new CilBody();
+
 			var reader = metadata.PEImage.CreateReader();
-			reader.Position = (uint)metadata.PEImage.ToFileOffset(rva);
+			reader.Position = (uint)offset;
 			return MethodBodyReader.CreateCilBody(this, reader, parameters, gpContext, Context);
 		}
 
@@ -1478,20 +1482,20 @@ namespace dnlib.DotNet {
 
 			if (token.Rid == 0) {
 				if (TryCreateResourceStream(mr.Offset, out var dataReaderFactory, out uint resourceOffset, out uint resourceLength))
-					return new EmbeddedResource(mr.Name, dataReaderFactory, resourceOffset, resourceLength, mr.Flags) { Rid = rid, Offset = mr.Offset };
-				return new EmbeddedResource(mr.Name, Array2.Empty<byte>(), mr.Flags) { Rid = rid, Offset = mr.Offset };
+					return new EmbeddedResourceMD(this, mr, dataReaderFactory, resourceOffset, resourceLength);
+				return new EmbeddedResourceMD(this, mr, Array2.Empty<byte>());
 			}
 
 			if (mr.Implementation is FileDef file)
-				return new LinkedResource(mr.Name, file, mr.Flags) { Rid = rid, Offset = mr.Offset };
+				return new LinkedResourceMD(this, mr, file);
 
 			if (mr.Implementation is AssemblyRef asmRef)
-				return new AssemblyLinkedResource(mr.Name, asmRef, mr.Flags) { Rid = rid, Offset = mr.Offset };
+				return new AssemblyLinkedResourceMD(this, mr, asmRef);
 
-			return new EmbeddedResource(mr.Name, Array2.Empty<byte>(), mr.Flags) { Rid = rid, Offset = mr.Offset };
+			return new EmbeddedResourceMD(this, mr, Array2.Empty<byte>());
 		}
 
-		[HandleProcessCorruptedStateExceptions, SecurityCritical]	// Req'd on .NET 4.0
+		[HandleProcessCorruptedStateExceptions, SecurityCritical]	// Req'd on .NET Framework 4.0
 		bool TryCreateResourceStream(uint offset, out DataReaderFactory dataReaderFactory, out uint resourceOffset, out uint resourceLength) {
 			dataReaderFactory = null;
 			resourceOffset = 0;
