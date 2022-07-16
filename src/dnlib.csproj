@@ -15,7 +15,7 @@
     <AssemblyName>dnlib</AssemblyName>
     <PackageId>dnlib</PackageId>
     <NeutralLanguage>en-US</NeutralLanguage>
-    <Version>3.3.2</Version>
+    <Version>3.5.0</Version>
     <InformationalVersion>$(Version)</InformationalVersion>
     <Authors>0xd4d</Authors>
     <PackageProjectUrl>https://github.com/0xd4d/dnlib</PackageProjectUrl>
@@ -26,8 +26,10 @@
     <Features>strict;nullablePublicOnly</Features>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
 
     <PackageDescription>
 Reads and writes .NET assemblies and modules, Windows PDBs and Portable PDBs.
@@ -41,6 +43,10 @@ For better *Windows PDB* writer support, you should add a reference to `Microsof
 
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
   <ItemGroup>

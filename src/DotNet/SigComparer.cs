@@ -465,7 +465,7 @@ namespace dnlib.DotNet {
 		/// <summary>
 		/// By default, all module and assembly compares when they're both the system library
 		/// (eg. mscorlib or System.Runtime.dll) return true, even if they're really different,
-		/// eg. mscorlib (.NET 2.0) vs mscorlib (Windows CE). If this flag is set, the system
+		/// eg. mscorlib (.NET Framework 2.0) vs mscorlib (Windows CE). If this flag is set, the system
 		/// library is compared just like any other module/assembly.
 		/// </summary>
 		MscorlibIsNotSpecial = 0x100000,
@@ -476,7 +476,7 @@ namespace dnlib.DotNet {
 		DontProjectWinMDRefs = 0x200000,
 
 		/// <summary>
-		/// Don't check type equivalence when comparing types. Starting with .NET 4.0, two different
+		/// Don't check type equivalence when comparing types. Starting with .NET Framework 4.0, two different
 		/// types can be considered equivalent if eg. a TypeIdentifierAttribute is used.
 		/// </summary>
 		DontCheckTypeEquivalence = 0x400000,
@@ -491,7 +491,7 @@ namespace dnlib.DotNet {
 	/// Compares types, signatures, methods, fields, properties, events
 	/// </summary>
 	public struct SigComparer {
-		const SigComparerOptions SigComparerOptions_SubstituteGenericParameters = (SigComparerOptions)0x400;
+		const SigComparerOptions SigComparerOptions_DontSubstituteGenericParameters = (SigComparerOptions)0x400;
 
 		const int HASHCODE_MAGIC_GLOBAL_TYPE = 1654396648;
 		const int HASHCODE_MAGIC_NESTED_TYPE = -1049070942;
@@ -521,7 +521,7 @@ namespace dnlib.DotNet {
 		bool CompareAssemblyLocale => (options & SigComparerOptions.CompareAssemblyLocale) != 0;
 		bool TypeRefCanReferenceGlobalType => (options & SigComparerOptions.TypeRefCanReferenceGlobalType) != 0;
 		bool DontCompareReturnType => (options & SigComparerOptions.DontCompareReturnType) != 0;
-		bool SubstituteGenericParameters => (options & SigComparerOptions_SubstituteGenericParameters) != 0;
+		bool DontSubstituteGenericParameters => (options & SigComparerOptions_DontSubstituteGenericParameters) != 0;
 		bool CaseInsensitiveTypeNamespaces => (options & SigComparerOptions.CaseInsensitiveTypeNamespaces) != 0;
 		bool CaseInsensitiveTypeNames => (options & SigComparerOptions.CaseInsensitiveTypeNames) != 0;
 		bool CaseInsensitiveMethodFieldNames => (options & SigComparerOptions.CaseInsensitiveMethodFieldNames) != 0;
@@ -1995,7 +1995,9 @@ exit: ;
 		/// </summary>
 		/// <param name="a">The type</param>
 		/// <returns>The hash code</returns>
-		public int GetHashCode(TypeSig a) {
+		public int GetHashCode(TypeSig a) => GetHashCode(a, true);
+
+		int GetHashCode(TypeSig a, bool substituteGenericParameters) {
 			// ********************************************
 			// IMPORTANT: This must match GetHashCode(Type)
 			// ********************************************
@@ -2005,8 +2007,11 @@ exit: ;
 				return 0;
 			int hash;
 
-			if (genericArguments is not null)
+			if (substituteGenericParameters && genericArguments is not null) {
+				var t = a;
 				a = genericArguments.Resolve(a);
+				substituteGenericParameters = t == a;
+			}
 
 			switch (a.ElementType) {
 			case ElementType.Void:
@@ -2039,15 +2044,15 @@ exit: ;
 				break;
 
 			case ElementType.Ptr:
-				hash = HASHCODE_MAGIC_ET_PTR + GetHashCode(a.Next);
+				hash = HASHCODE_MAGIC_ET_PTR + GetHashCode(a.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.ByRef:
-				hash = HASHCODE_MAGIC_ET_BYREF + GetHashCode(a.Next);
+				hash = HASHCODE_MAGIC_ET_BYREF + GetHashCode(a.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.SZArray:
-				hash = HASHCODE_MAGIC_ET_SZARRAY + GetHashCode(a.Next);
+				hash = HASHCODE_MAGIC_ET_SZARRAY + GetHashCode(a.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.CModReqd:
@@ -2055,14 +2060,14 @@ exit: ;
 			case ElementType.Pinned:
 				// When comparing an ExportedType/TypeDef/TypeRef to a ModifierSig/PinnedSig,
 				// the ET is ignored, so we must ignore it when calculating the hash.
-				hash = GetHashCode(a.Next);
+				hash = GetHashCode(a.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.Array:
 				// Don't include sizes and lower bounds since GetHashCode(Type) doesn't (and can't).
 				// Also, if IgnoreMultiDimensionArrayLowerBoundsAndSizes is set, we shouldn't include them either.
 				var ara = (ArraySig)a;
-				hash = HASHCODE_MAGIC_ET_ARRAY + (int)ara.Rank + GetHashCode(ara.Next);
+				hash = HASHCODE_MAGIC_ET_ARRAY + (int)ara.Rank + GetHashCode(ara.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.Var:
@@ -2076,15 +2081,8 @@ exit: ;
 			case ElementType.GenericInst:
 				var gia = (GenericInstSig)a;
 				hash = HASHCODE_MAGIC_ET_GENERICINST;
-				if (SubstituteGenericParameters) {
-					InitializeGenericArguments();
-					genericArguments.PushTypeArgs(gia.GenericArguments);
-					hash += GetHashCode(gia.GenericType);
-					genericArguments.PopTypeArgs();
-				}
-				else
-					hash += GetHashCode(gia.GenericType);
-				hash += GetHashCode(gia.GenericArguments);
+				hash += GetHashCode(gia.GenericType, substituteGenericParameters);
+				hash += GetHashCode(gia.GenericArguments, substituteGenericParameters);
 				break;
 
 			case ElementType.FnPtr:
@@ -2092,11 +2090,11 @@ exit: ;
 				break;
 
 			case ElementType.ValueArray:
-				hash = HASHCODE_MAGIC_ET_VALUEARRAY + (int)(a as ValueArraySig).Size + GetHashCode(a.Next);
+				hash = HASHCODE_MAGIC_ET_VALUEARRAY + (int)(a as ValueArraySig).Size + GetHashCode(a.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.Module:
-				hash = HASHCODE_MAGIC_ET_MODULE + (int)(a as ModuleSig).Index + GetHashCode(a.Next);
+				hash = HASHCODE_MAGIC_ET_MODULE + (int)(a as ModuleSig).Index + GetHashCode(a.Next, substituteGenericParameters);
 				break;
 
 			case ElementType.End:
@@ -2146,7 +2144,9 @@ exit: ;
 		/// </summary>
 		/// <param name="a">The type list</param>
 		/// <returns>The hash code</returns>
-		public int GetHashCode(IList<TypeSig> a) {
+		public int GetHashCode(IList<TypeSig> a) => GetHashCode(a, true);
+
+		int GetHashCode(IList<TypeSig> a, bool substituteGenericParameters) {
 			//************************************************************************
 			// IMPORTANT: This code must match any other GetHashCode(IList<SOME_TYPE>)
 			//************************************************************************
@@ -2156,7 +2156,7 @@ exit: ;
 				return 0;
 			uint hash = 0;
 			for (int i = 0; i < a.Count; i++) {
-				hash += (uint)GetHashCode(a[i]);
+				hash += (uint)GetHashCode(a[i], substituteGenericParameters);
 				hash = (hash << 13) | (hash >> 19);
 			}
 			recursionCounter.Decrement();
@@ -2700,7 +2700,7 @@ exit: ;
 
 			int hash = GetHashCode_MethodFieldName(a.Name);
 			GenericInstSig git;
-			if (SubstituteGenericParameters && (git = GetGenericInstanceType(a.Class)) is not null) {
+			if (CompareMethodFieldDeclaringType && !DontSubstituteGenericParameters && (git = GetGenericInstanceType(a.Class)) is not null) {
 				InitializeGenericArguments();
 				genericArguments.PushTypeArgs(git.GenericArguments);
 				hash += GetHashCode(a.Signature);
@@ -2749,8 +2749,6 @@ exit: ;
 			if (!recursionCounter.Increment())
 				return 0;
 
-			// We must do this or it won't get the same hash code as some MethodInfos
-			var oldOptions = SetOptions(SigComparerOptions_SubstituteGenericParameters);
 			var gim = a.GenericInstMethodSig;
 			if (gim is not null) {
 				InitializeGenericArguments();
@@ -2759,7 +2757,6 @@ exit: ;
 			int hash = GetHashCode(a.Method);
 			if (gim is not null)
 				genericArguments.PopMethodArgs();
-			RestoreOptions(oldOptions);
 
 			recursionCounter.Decrement();
 			return hash;
@@ -3279,11 +3276,11 @@ exit: ;
 		/// <param name="a">Type #1</param>
 		/// <param name="b">Type #2</param>
 		/// <returns><c>true</c> if same, <c>false</c> otherwise</returns>
-		public bool Equals(TypeSig a, Type b) => Equals(a, b, false);
+		public bool Equals(TypeSig a, Type b) => Equals(a, b, null, false);
 
-		bool Equals(ITypeDefOrRef a, Type b, bool treatAsGenericInst) {
+		bool Equals(ITypeDefOrRef a, Type b, Type declaringType) {
 			if (a is TypeSpec ts)
-				return Equals(ts.TypeSig, b, treatAsGenericInst);
+				return Equals(ts.TypeSig, b, declaringType);
 			return Equals(a, b);
 		}
 
@@ -3310,10 +3307,12 @@ exit: ;
 		/// </summary>
 		/// <param name="a">Type #1</param>
 		/// <param name="b">Type #2</param>
+		/// <param name="declaringType">Root declaring type to check if we should
+		/// treat <paramref name="b"/> as a generic instance type</param>
 		/// <param name="treatAsGenericInst"><c>true</c> if we should treat <paramref name="b"/>
 		/// as a generic instance type</param>
 		/// <returns><c>true</c> if same, <c>false</c> otherwise</returns>
-		bool Equals(TypeSig a, Type b, bool treatAsGenericInst) {
+		bool Equals(TypeSig a, Type b, Type declaringType, bool? treatAsGenericInst = null) {
 			// Global methods and fields have their DeclaringType set to null. Assume
 			// null always means the global type.
 			if (a is null)
@@ -3324,6 +3323,7 @@ exit: ;
 				return false;
 			bool result;
 
+			bool treatAsGenericInst2 = treatAsGenericInst ?? declaringType.MustTreatTypeAsGenericInstType(b);
 			if (genericArguments is not null)
 				a = genericArguments.Resolve(a);
 
@@ -3346,7 +3346,7 @@ exit: ;
 			case ElementType.I:
 			case ElementType.U:
 			case ElementType.Object:
-				result = Equals(((TypeDefOrRefSig)a).TypeDefOrRef, b, treatAsGenericInst);
+				result = Equals(((TypeDefOrRefSig)a).TypeDefOrRef, b, declaringType);
 				break;
 
 			case ElementType.Ptr:
@@ -3357,7 +3357,7 @@ exit: ;
 					result = a is not null && a.ElementType == ElementType.FnPtr;
 				}
 				else
-					result = Equals(a.Next, b.GetElementType());
+					result = Equals(a.Next, b.GetElementType(), declaringType);
 				break;
 
 			case ElementType.ByRef:
@@ -3368,7 +3368,7 @@ exit: ;
 					result = a is not null && a.ElementType == ElementType.FnPtr;
 				}
 				else
-					result = Equals(a.Next, b.GetElementType());
+					result = Equals(a.Next, b.GetElementType(), declaringType);
 				break;
 
 			case ElementType.SZArray:
@@ -3379,11 +3379,11 @@ exit: ;
 					result = a is not null && a.ElementType == ElementType.FnPtr;
 				}
 				else
-					result = Equals(a.Next, b.GetElementType());
+					result = Equals(a.Next, b.GetElementType(), declaringType);
 				break;
 
 			case ElementType.Pinned:
-				result = Equals(a.Next, b, treatAsGenericInst);
+				result = Equals(a.Next, b, declaringType);
 				break;
 
 			case ElementType.Array:
@@ -3394,13 +3394,13 @@ exit: ;
 					result = ara.Rank == b.GetArrayRank() &&
 						(IsFnPtrElementType(b) ?
 								(a = a.Next.RemoveModifiers()) is not null && a.ElementType == ElementType.FnPtr :
-								Equals(a.Next, b.GetElementType()));
+								Equals(a.Next, b.GetElementType(), declaringType));
 				}
 				break;
 
 			case ElementType.ValueType:
 			case ElementType.Class:
-				result = Equals((a as ClassOrValueTypeSig).TypeDefOrRef, b, treatAsGenericInst);
+				result = Equals((a as ClassOrValueTypeSig).TypeDefOrRef, b, declaringType);
 				break;
 
 			case ElementType.Var:
@@ -3416,25 +3416,18 @@ exit: ;
 				break;
 
 			case ElementType.GenericInst:
-				if (!(b.IsGenericType && !b.IsGenericTypeDefinition) && !treatAsGenericInst) {
+				if (!(b.IsGenericType && !b.IsGenericTypeDefinition) && !treatAsGenericInst2) {
 					result = false;
 					break;
 				}
 				var gia = (GenericInstSig)a;
-				if (SubstituteGenericParameters) {
-					InitializeGenericArguments();
-					genericArguments.PushTypeArgs(gia.GenericArguments);
-					result = Equals(gia.GenericType, b.GetGenericTypeDefinition());
-					genericArguments.PopTypeArgs();
-				}
-				else
-					result = Equals(gia.GenericType, b.GetGenericTypeDefinition());
-				result = result && Equals(gia.GenericArguments, b.GetGenericArguments());
+				result = Equals(gia.GenericType, b.GetGenericTypeDefinition(), null, false);
+				result = result && Equals(gia.GenericArguments, b.GetGenericArguments(), declaringType);
 				break;
 
 			case ElementType.CModReqd:
 			case ElementType.CModOpt:
-				result = Equals(a.Next, b, treatAsGenericInst);
+				result = Equals(a.Next, b, declaringType);
 				break;
 
 			case ElementType.FnPtr:
@@ -3525,7 +3518,9 @@ exit: ;
 		/// <param name="treatAsGenericInst"><c>true</c> if we should treat <paramref name="a"/>
 		/// as a generic instance type</param>
 		/// <returns>The hash code</returns>
-		public int GetHashCode(Type a, bool treatAsGenericInst) {
+		public int GetHashCode(Type a, bool treatAsGenericInst) => GetHashCode(a, null, treatAsGenericInst);
+
+		int GetHashCode(Type a, Type declaringType, bool? treatAsGenericInst = null) {
 			// **************************************************************************
 			// IMPORTANT: This hash code must match the TypeSig/TypeDef/TypeRef hash code
 			// **************************************************************************
@@ -3535,7 +3530,8 @@ exit: ;
 				return 0;
 			int hash;
 
-			switch (treatAsGenericInst ? ElementType.GenericInst : a.GetElementType2()) {
+			bool treatAsGenericInst2 = treatAsGenericInst ?? declaringType.MustTreatTypeAsGenericInstType(a);
+			switch (treatAsGenericInst2 ? ElementType.GenericInst : a.GetElementType2()) {
 			case ElementType.Void:
 			case ElementType.Boolean:
 			case ElementType.Char:
@@ -3569,30 +3565,30 @@ exit: ;
 
 			case ElementType.Ptr:
 				hash = HASHCODE_MAGIC_ET_PTR +
-					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType()));
+					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType(), declaringType));
 				break;
 
 			case ElementType.ByRef:
 				hash = HASHCODE_MAGIC_ET_BYREF +
-					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType()));
+					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType(), declaringType));
 				break;
 
 			case ElementType.SZArray:
 				hash = HASHCODE_MAGIC_ET_SZARRAY +
-					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType()));
+					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType(), declaringType));
 				break;
 
 			case ElementType.CModReqd:
 			case ElementType.CModOpt:
 			case ElementType.Pinned:
-				hash = GetHashCode(a.GetElementType());
+				hash = GetHashCode(a.GetElementType(), declaringType);
 				break;
 
 			case ElementType.Array:
 				// The type doesn't store sizes and lower bounds, so can't use them to
 				// create the hash
 				hash = HASHCODE_MAGIC_ET_ARRAY + a.GetArrayRank() +
-					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType()));
+					(IsFnPtrElementType(a) ? GetHashCode_FnPtr_SystemIntPtr() : GetHashCode(a.GetElementType(), declaringType));
 				break;
 
 			case ElementType.Var:
@@ -3604,7 +3600,8 @@ exit: ;
 				break;
 
 			case ElementType.GenericInst:
-				hash = HASHCODE_MAGIC_ET_GENERICINST + GetHashCode(a.GetGenericTypeDefinition()) + GetHashCode(a.GetGenericArguments());
+				hash = HASHCODE_MAGIC_ET_GENERICINST + GetHashCode(a.GetGenericTypeDefinition(), false) +
+					GetHashCode(a.GetGenericArguments(), declaringType);
 				break;
 
 			case ElementType.ValueArray:
@@ -3625,8 +3622,10 @@ exit: ;
 		/// Gets the hash code of a type list
 		/// </summary>
 		/// <param name="a">The type list</param>
+		/// <param name="declaringType">Root declaring type to check if we should
+		/// treat <paramref name="a"/> as a generic instance type</param>
 		/// <returns>The hash code</returns>
-		int GetHashCode(IList<Type> a) {
+		int GetHashCode(IList<Type> a, Type declaringType) {
 			//************************************************************************
 			// IMPORTANT: This code must match any other GetHashCode(IList<SOME_TYPE>)
 			//************************************************************************
@@ -3636,7 +3635,7 @@ exit: ;
 				return 0;
 			uint hash = 0;
 			for (int i = 0; i < a.Count; i++) {
-				hash += (uint)GetHashCode(a[i]);
+				hash += (uint)GetHashCode(a[i], declaringType);
 				hash = (hash << 13) | (hash >> 19);
 			}
 			recursionCounter.Decrement();
@@ -3691,8 +3690,10 @@ exit: ;
 		/// </summary>
 		/// <param name="a">Type list #1</param>
 		/// <param name="b">Type list #2</param>
+		/// <param name="declaringType">Root declaring type to check if we should
+		/// treat <paramref name="b"/> as a generic instance type</param>
 		/// <returns><c>true</c> if same, <c>false</c> otherwise</returns>
-		bool Equals(IList<TypeSig> a, IList<Type> b) {
+		bool Equals(IList<TypeSig> a, IList<Type> b, Type declaringType) {
 			if ((object)a == (object)b)
 				return true;	// both are null
 			if (a is null || b is null)
@@ -3706,7 +3707,7 @@ exit: ;
 			else {
 				int i;
 				for (i = 0; i < a.Count; i++) {
-					if (!Equals(a[i], b[i]))
+					if (!Equals(a[i], b[i], declaringType))
 						break;
 				}
 				result = i == a.Count;
@@ -3973,6 +3974,12 @@ exit: ;
 			if (!recursionCounter.Increment())
 				return false;
 
+			if (!CompareMethodFieldDeclaringType && b.DeclaringType.IsGenericButNotGenericTypeDefinition()) {
+				var t = b;
+				b = b.Module.ResolveMethod(b.MetadataToken);
+				if (b.IsGenericButNotGenericMethodDefinition())
+					b = ((MethodInfo)b).MakeGenericMethod(t.GetGenericArguments());
+			}
 			bool result = Equals(a.GetCallingConvention(), b) &&
 					(DontCompareReturnType || ReturnTypeEquals(a.RetType, b)) &&
 					Equals(a.Params, b.GetParameters(), b.DeclaringType) &&
@@ -4013,6 +4020,7 @@ exit: ;
 				result = a.IsMethodRef && a.MethodSig.Generic;
 
 				var oldOptions = ClearOptions(SigComparerOptions.CompareMethodFieldDeclaringType);
+				SetOptions(SigComparerOptions_DontSubstituteGenericParameters);
 				result = result && Equals(a, b.Module.ResolveMethod(b.MetadataToken));
 				RestoreOptions(oldOptions);
 				result = result && DeclaringTypeEquals(a, b);
@@ -4027,7 +4035,7 @@ exit: ;
 						(!amSig.Generic && !b.IsGenericMethodDefinition && !b.IsGenericMethod));
 
 				GenericInstSig git;
-				if (SubstituteGenericParameters && (git = GetGenericInstanceType(a.Class)) is not null) {
+				if (CompareMethodFieldDeclaringType && !DontSubstituteGenericParameters && (git = GetGenericInstanceType(a.Class)) is not null) {
 					InitializeGenericArguments();
 					genericArguments.PushTypeArgs(git.GenericArguments);
 					result = result && Equals(amSig, b);
@@ -4122,12 +4130,13 @@ exit: ;
 			// declaring type (its declaring type is a generic type def).
 			// NOTE: We must not push generic method args when comparing a.Method
 			var oldOptions = ClearOptions(SigComparerOptions.CompareMethodFieldDeclaringType);
+			SetOptions(SigComparerOptions_DontSubstituteGenericParameters);
 			result = result && Equals(a.Method, b.Module.ResolveMethod(b.MetadataToken));
 			RestoreOptions(oldOptions);
 			result = result && DeclaringTypeEquals(a.Method, b);
 
 			var gim = a.GenericInstMethodSig;
-			result = result && gim is not null && Equals(gim.GenericArguments, b.GetGenericArguments());
+			result = result && gim is not null && Equals(gim.GenericArguments, b.GetGenericArguments(), b.DeclaringType);
 
 			recursionCounter.Decrement();
 			return result;
@@ -4163,6 +4172,12 @@ exit: ;
 				return 0;
 			int hash;
 
+			if (!CompareMethodFieldDeclaringType && a.DeclaringType.IsGenericButNotGenericTypeDefinition()) {
+				var t = a;
+				a = a.Module.ResolveMethod(a.MetadataToken);
+				if (t.IsGenericButNotGenericMethodDefinition())
+					a = ((MethodInfo)a).MakeGenericMethod(t.GetGenericArguments());
+			}
 			hash = GetHashCode_CallingConvention(a.CallingConvention, a.IsGenericMethod) +
 					GetHashCode(a.GetParameters(), a.DeclaringType);
 			if (!DontCompareReturnType)
@@ -4204,8 +4219,7 @@ exit: ;
 			return GetHashCode(typeof(void));
 		}
 
-		int GetHashCode(ParameterInfo a, Type declaringType) => GetHashCode(a.ParameterType, declaringType.MustTreatTypeAsGenericInstType(a.ParameterType));
-		int GetHashCode(Type a, Type declaringType) => GetHashCode(a, declaringType.MustTreatTypeAsGenericInstType(a));
+		int GetHashCode(ParameterInfo a, Type declaringType) => GetHashCode(a.ParameterType, declaringType);
 
 		/// <summary>
 		/// Compares calling conventions
@@ -4336,7 +4350,7 @@ exit: ;
 				return false;
 
 			bool result = ModifiersEquals(a, b.GetRequiredCustomModifiers(), b.GetOptionalCustomModifiers(), out var a2) &&
-						Equals(a2, b.ParameterType, declaringType.MustTreatTypeAsGenericInstType(b.ParameterType));
+						Equals(a2, b.ParameterType, declaringType);
 
 			recursionCounter.Decrement();
 			return result;
@@ -4476,8 +4490,10 @@ exit: ;
 			if (!recursionCounter.Increment())
 				return false;
 
+			if (!CompareMethodFieldDeclaringType && b.DeclaringType.IsGenericButNotGenericTypeDefinition())
+				b = b.Module.ResolveField(b.MetadataToken);
 			bool result = ModifiersEquals(a.Type, b.GetRequiredCustomModifiers(), b.GetOptionalCustomModifiers(), out var a2) &&
-					Equals(a2, b.FieldType, b.DeclaringType.MustTreatTypeAsGenericInstType(b.FieldType));
+					Equals(a2, b.FieldType, b.DeclaringType);
 
 			recursionCounter.Decrement();
 			return result;
@@ -4508,7 +4524,7 @@ exit: ;
 			bool result = Equals_MethodFieldNames(a.Name, b.Name);
 
 			GenericInstSig git;
-			if (SubstituteGenericParameters && (git = GetGenericInstanceType(a.Class)) is not null) {
+			if (CompareMethodFieldDeclaringType && !DontSubstituteGenericParameters && (git = GetGenericInstanceType(a.Class)) is not null) {
 				InitializeGenericArguments();
 				genericArguments.PushTypeArgs(git.GenericArguments);
 				result = result && Equals(a.FieldSig, b);
@@ -4553,6 +4569,8 @@ exit: ;
 				return 0;
 			int hash;
 
+			if (!CompareMethodFieldDeclaringType && a.DeclaringType.IsGenericButNotGenericTypeDefinition())
+				a = a.Module.ResolveField(a.MetadataToken);
 			hash = GetHashCode_CallingConvention(0, false) + GetHashCode(a.FieldType, a.DeclaringType);
 
 			recursionCounter.Decrement();
@@ -4590,7 +4608,7 @@ exit: ;
 				return false;
 
 			bool result = ModifiersEquals(a.RetType, b.GetRequiredCustomModifiers(), b.GetOptionalCustomModifiers(), out var a2) &&
-					Equals(a2, b.PropertyType, b.DeclaringType.MustTreatTypeAsGenericInstType(b.PropertyType));
+					Equals(a2, b.PropertyType, b.DeclaringType);
 
 			recursionCounter.Decrement();
 			return result;
@@ -4634,7 +4652,7 @@ exit: ;
 				return false;
 
 			bool result = Equals_EventNames(a.Name, b.Name) &&
-					Equals(a.EventType, b.EventHandlerType, b.DeclaringType.MustTreatTypeAsGenericInstType(b.EventHandlerType)) &&
+					Equals(a.EventType, b.EventHandlerType, b.DeclaringType) &&
 					(!CompareEventDeclaringType || Equals(a.DeclaringType, b.DeclaringType));
 
 			recursionCounter.Decrement();

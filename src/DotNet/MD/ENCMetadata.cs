@@ -14,7 +14,8 @@ namespace dnlib.DotNet.MD {
 	sealed class ENCMetadata : MetadataBase {
 		static readonly UTF8String DeletedName = "_Deleted";
 		bool hasMethodPtr, hasFieldPtr, hasParamPtr, hasEventPtr, hasPropertyPtr;
-		bool hasDeletedRows;
+		bool hasDeletedFields;
+		bool hasDeletedNonFields;
 		readonly CLRRuntimeReaderKind runtime;
 		readonly Dictionary<Table, SortedTable> sortedTables = new Dictionary<Table, SortedTable>();
 #if THREAD_SAFE
@@ -39,6 +40,7 @@ namespace dnlib.DotNet.MD {
 		/// <inheritdoc/>
 		protected override void InitializeInternal(DataReaderFactory mdReaderFactory, uint metadataBaseOffset) {
 			DotNetStream dns = null;
+			bool forceAllBig = false;
 			try {
 				if (runtime == CLRRuntimeReaderKind.Mono) {
 					var newAllStreams = new List<DotNetStream>(allStreams);
@@ -93,6 +95,10 @@ namespace dnlib.DotNet.MD {
 								continue;
 							}
 							break;
+
+						case "#JTD":
+							forceAllBig = true;
+							continue;
 						}
 						dns = new CustomDotNetStream(mdReaderFactory, metadataBaseOffset, sh);
 						newAllStreams.Add(dns);
@@ -155,6 +161,10 @@ namespace dnlib.DotNet.MD {
 								continue;
 							}
 							break;
+
+						case "#JTD":
+							forceAllBig = true;
+							continue;
 						}
 						dns = new CustomDotNetStream(mdReaderFactory, metadataBaseOffset, sh);
 						allStreams.Add(dns);
@@ -170,9 +180,9 @@ namespace dnlib.DotNet.MD {
 				throw new BadImageFormatException("Missing MD stream");
 
 			if (pdbStream is not null)
-				tablesStream.Initialize(pdbStream.TypeSystemTableRows);
+				tablesStream.Initialize(pdbStream.TypeSystemTableRows, forceAllBig);
 			else
-				tablesStream.Initialize(null);
+				tablesStream.Initialize(null, forceAllBig);
 
 			// The pointer tables are used iff row count != 0
 			hasFieldPtr = !tablesStream.FieldPtrTable.IsEmpty;
@@ -180,12 +190,26 @@ namespace dnlib.DotNet.MD {
 			hasParamPtr = !tablesStream.ParamPtrTable.IsEmpty;
 			hasEventPtr = !tablesStream.EventPtrTable.IsEmpty;
 			hasPropertyPtr = !tablesStream.PropertyPtrTable.IsEmpty;
-			hasDeletedRows = tablesStream.HasDelete;
+
+			switch (runtime) {
+			case CLRRuntimeReaderKind.CLR:
+				hasDeletedFields = tablesStream.HasDelete;
+				hasDeletedNonFields = tablesStream.HasDelete;
+				break;
+
+			case CLRRuntimeReaderKind.Mono:
+				hasDeletedFields = true;
+				hasDeletedNonFields = false;
+				break;
+
+			default:
+				throw new InvalidOperationException();
+			}
 		}
 
 		/// <inheritdoc/>
 		public override RidList GetTypeDefRidList() {
-			if (!hasDeletedRows)
+			if (!hasDeletedNonFields)
 				return base.GetTypeDefRidList();
 			uint rows = tablesStream.TypeDefTable.Rows;
 			var list = new List<uint>((int)rows);
@@ -195,7 +219,8 @@ namespace dnlib.DotNet.MD {
 
 				// RTSpecialName is ignored by the CLR. It's only the name that indicates
 				// whether it's been deleted.
-				if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
+				// It's not possible to delete the global type (<Module>)
+				if (rid != 1 && stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
 					continue;	// ignore this deleted row
 				list.Add(rid);
 			}
@@ -204,7 +229,7 @@ namespace dnlib.DotNet.MD {
 
 		/// <inheritdoc/>
 		public override RidList GetExportedTypeRidList() {
-			if (!hasDeletedRows)
+			if (!hasDeletedNonFields)
 				return base.GetExportedTypeRidList();
 			uint rows = tablesStream.ExportedTypeTable.Rows;
 			var list = new List<uint>((int)rows);
@@ -279,7 +304,7 @@ namespace dnlib.DotNet.MD {
 		/// <inheritdoc/>
 		public override RidList GetFieldRidList(uint typeDefRid) {
 			var list = GetRidList(tablesStream.TypeDefTable, typeDefRid, 4, tablesStream.FieldTable);
-			if (list.Count == 0 || (!hasFieldPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasFieldPtr && !hasDeletedFields))
 				return list;
 
 			var destTable = tablesStream.FieldTable;
@@ -288,13 +313,21 @@ namespace dnlib.DotNet.MD {
 				var rid = ToFieldRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
-				if (hasDeletedRows) {
+				if (hasDeletedFields) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
 					if (!tablesStream.TryReadFieldRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
-					if ((row.Flags & (uint)FieldAttributes.RTSpecialName) != 0) {
-						if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
-							continue;	// ignore this deleted row
+					if (runtime == CLRRuntimeReaderKind.CLR) {
+						if ((row.Flags & (uint)FieldAttributes.RTSpecialName) != 0) {
+							if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
+								continue;	// ignore this deleted row
+						}
+					}
+					else {
+						if ((row.Flags & (uint)(FieldAttributes.SpecialName | FieldAttributes.RTSpecialName)) == (uint)(FieldAttributes.SpecialName | FieldAttributes.RTSpecialName)) {
+							if (stringsStream.ReadNoNull(row.Name) == DeletedName)
+								continue;	// ignore this deleted row
+						}
 					}
 				}
 				// It's a valid non-deleted rid so add it
@@ -306,7 +339,7 @@ namespace dnlib.DotNet.MD {
 		/// <inheritdoc/>
 		public override RidList GetMethodRidList(uint typeDefRid) {
 			var list = GetRidList(tablesStream.TypeDefTable, typeDefRid, 5, tablesStream.MethodTable);
-			if (list.Count == 0 || (!hasMethodPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasMethodPtr && !hasDeletedNonFields))
 				return list;
 
 			var destTable = tablesStream.MethodTable;
@@ -315,7 +348,7 @@ namespace dnlib.DotNet.MD {
 				var rid = ToMethodRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
-				if (hasDeletedRows) {
+				if (hasDeletedNonFields) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
 					if (!tablesStream.TryReadMethodRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
@@ -350,7 +383,7 @@ namespace dnlib.DotNet.MD {
 		/// <inheritdoc/>
 		public override RidList GetEventRidList(uint eventMapRid) {
 			var list = GetRidList(tablesStream.EventMapTable, eventMapRid, 1, tablesStream.EventTable);
-			if (list.Count == 0 || (!hasEventPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasEventPtr && !hasDeletedNonFields))
 				return list;
 
 			var destTable = tablesStream.EventTable;
@@ -359,7 +392,7 @@ namespace dnlib.DotNet.MD {
 				var rid = ToEventRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
-				if (hasDeletedRows) {
+				if (hasDeletedNonFields) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
 					if (!tablesStream.TryReadEventRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
@@ -377,7 +410,7 @@ namespace dnlib.DotNet.MD {
 		/// <inheritdoc/>
 		public override RidList GetPropertyRidList(uint propertyMapRid) {
 			var list = GetRidList(tablesStream.PropertyMapTable, propertyMapRid, 1, tablesStream.PropertyTable);
-			if (list.Count == 0 || (!hasPropertyPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasPropertyPtr && !hasDeletedNonFields))
 				return list;
 
 			var destTable = tablesStream.PropertyTable;
@@ -386,7 +419,7 @@ namespace dnlib.DotNet.MD {
 				var rid = ToPropertyRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
-				if (hasDeletedRows) {
+				if (hasDeletedNonFields) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
 					if (!tablesStream.TryReadPropertyRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
@@ -400,6 +433,12 @@ namespace dnlib.DotNet.MD {
 			}
 			return RidList.Create(newList);
 		}
+
+		/// <inheritdoc/>
+		public override RidList GetLocalVariableRidList(uint localScopeRid) => GetRidList(tablesStream.LocalScopeTable, localScopeRid, 2, tablesStream.LocalVariableTable);
+
+		/// <inheritdoc/>
+		public override RidList GetLocalConstantRidList(uint localScopeRid) => GetRidList(tablesStream.LocalScopeTable, localScopeRid, 3, tablesStream.LocalConstantTable);
 
 		/// <summary>
 		/// Gets a rid list (eg. field list)
@@ -447,14 +486,6 @@ namespace dnlib.DotNet.MD {
 			return 0;
 		}
 
-		/// <summary>
-		/// Linear searches the table (O(n)) for a <c>rid</c> whose key column at index
-		/// <paramref name="keyColIndex"/> is equal to <paramref name="key"/>.
-		/// </summary>
-		/// <param name="tableSource">Table to search</param>
-		/// <param name="keyColIndex">Key column index</param>
-		/// <param name="key">Key</param>
-		/// <returns>The <c>rid</c> of the found row, or 0 if none found</returns>
 		uint LinearSearch(MDTable tableSource, int keyColIndex, uint key) {
 			if (tableSource is null)
 				return 0;

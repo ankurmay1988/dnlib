@@ -198,7 +198,15 @@ namespace dnlib.DotNet.MD {
 		/// Initializes MD tables
 		/// </summary>
 		/// <param name="typeSystemTableRows">Type system table rows (from #Pdb stream)</param>
-		public void Initialize(uint[] typeSystemTableRows) {
+		public void Initialize(uint[] typeSystemTableRows) =>
+			Initialize(typeSystemTableRows, false);
+
+		/// <summary>
+		/// Initializes MD tables
+		/// </summary>
+		/// <param name="typeSystemTableRows">Type system table rows (from #Pdb stream)</param>
+		/// <param name="forceAllBig">Force all columns to 4 bytes instead of 2 or 4 bytes</param>
+		internal void Initialize(uint[] typeSystemTableRows, bool forceAllBig) {
 			if (initialized)
 				throw new Exception("Initialize() has already been called");
 			initialized = true;
@@ -211,9 +219,18 @@ namespace dnlib.DotNet.MD {
 			log2Rid = reader.ReadByte();
 			validMask = reader.ReadUInt64();
 			sortedMask = reader.ReadUInt64();
+			// Mono assumes everything is sorted
+			if (runtime == CLRRuntimeReaderKind.Mono)
+				sortedMask = ulong.MaxValue;
 
 			var dnTableSizes = new DotNetTableSizes();
-			var tableInfos = dnTableSizes.CreateTables(majorVersion, minorVersion, out int maxPresentTables);
+			byte tmpMajor = majorVersion, tmpMinor = minorVersion;
+			// It ignores the version so use 2.0
+			if (runtime == CLRRuntimeReaderKind.Mono) {
+				tmpMajor = 2;
+				tmpMinor = 0;
+			}
+			var tableInfos = dnTableSizes.CreateTables(tmpMajor, tmpMinor, out int maxPresentTables);
 			if (typeSystemTableRows is not null)
 				maxPresentTables = DotNetTableSizes.normalMaxTables;
 			mdTables = new MDTable[tableInfos.Length];
@@ -245,7 +262,7 @@ namespace dnlib.DotNet.MD {
 				}
 			}
 
-			dnTableSizes.InitializeSizes(HasBigStrings, HasBigGUID, HasBigBlob, sizes, debugSizes);
+			dnTableSizes.InitializeSizes(HasBigStrings, HasBigGUID, HasBigBlob, sizes, debugSizes, forceAllBig);
 
 			mdTablesPos = reader.Position;
 			InitializeMdTableReaders();

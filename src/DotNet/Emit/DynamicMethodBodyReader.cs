@@ -62,6 +62,7 @@ namespace dnlib.DotNet.Emit {
 		readonly MethodDef method;
 		readonly int codeSize;
 		readonly int maxStack;
+		readonly bool initLocals;
 		readonly List<object> tokens;
 		readonly IList<object> ehInfos;
 		readonly byte[] ehHeader;
@@ -172,8 +173,8 @@ namespace dnlib.DotNet.Emit {
 					throw new Exception("RTDynamicMethod.m_owner is null or invalid");
 			}
 
-			if (obj is DynamicMethod) {
-				methodName = ((DynamicMethod)obj).Name;
+			if (obj is DynamicMethod dynMethod) {
+				methodName = dynMethod.Name;
 				obj = dmResolverFieldInfo.Read(obj);
 				if (obj is null)
 					throw new Exception("No resolver found");
@@ -186,9 +187,10 @@ namespace dnlib.DotNet.Emit {
 			if (code is null)
 				throw new Exception("No code");
 			codeSize = code.Length;
-			var delMethod = rslvMethodFieldInfo.Read(obj) as SR.MethodBase;
+			var delMethod = rslvMethodFieldInfo.Read(obj) as DynamicMethod;
 			if (delMethod is null)
 				throw new Exception("No method");
+			initLocals = delMethod.InitLocals;
 			maxStack = (int)rslvMaxStackFieldInfo.Read(obj);
 
 			var scope = rslvDynamicScopeFieldInfo.Read(obj);
@@ -326,9 +328,9 @@ namespace dnlib.DotNet.Emit {
 						eh.HandlerStart = GetInstructionThrow((uint)offs);
 						eh.HandlerEnd = GetInstruction((uint)(reader.ReadByte() + offs));
 
-						if (eh.HandlerType == ExceptionHandlerType.Catch)
+						if (eh.IsCatch)
 							eh.CatchType = ReadToken(reader.ReadUInt32()) as ITypeDefOrRef;
-						else if (eh.HandlerType == ExceptionHandlerType.Filter)
+						else if (eh.IsFilter)
 							eh.FilterStart = GetInstruction(reader.ReadUInt32());
 						else
 							reader.ReadUInt32();
@@ -351,9 +353,9 @@ namespace dnlib.DotNet.Emit {
 						eh.HandlerStart = GetInstructionThrow((uint)offs);
 						eh.HandlerEnd = GetInstruction((uint)(reader.ReadUInt32() + offs));
 
-						if (eh.HandlerType == ExceptionHandlerType.Catch)
+						if (eh.IsCatch)
 							eh.CatchType = ReadToken(reader.ReadUInt32()) as ITypeDefOrRef;
-						else if (eh.HandlerType == ExceptionHandlerType.Filter)
+						else if (eh.IsFilter)
 							eh.FilterStart = GetInstruction(reader.ReadUInt32());
 						else
 							reader.ReadUInt32();
@@ -371,7 +373,7 @@ namespace dnlib.DotNet.Emit {
 						var eh = new ExceptionHandler();
 						eh.HandlerType = (ExceptionHandlerType)ehInfo.Type[i];
 						eh.TryStart = tryStart;
-						eh.TryEnd = eh.HandlerType == ExceptionHandlerType.Finally ? endFinally : tryEnd;
+						eh.TryEnd = eh.IsFinally ? endFinally : tryEnd;
 						eh.FilterStart = null;	// not supported by DynamicMethod.ILGenerator
 						eh.HandlerStart = GetInstructionThrow((uint)ehInfo.CatchAddr[i]);
 						eh.HandlerEnd = GetInstruction((uint)ehInfo.CatchEndAddr[i]);
@@ -387,7 +389,6 @@ namespace dnlib.DotNet.Emit {
 		/// </summary>
 		/// <returns>A new <see cref="CilBody"/> instance</returns>
 		public MethodDef GetMethod() {
-			bool initLocals = true;
 			var cilBody = new CilBody(initLocals, instructions, exceptionHandlers, locals);
 			cilBody.MaxStack = (ushort)Math.Min(maxStack, ushort.MaxValue);
 			instructions = null;
@@ -476,13 +477,13 @@ namespace dnlib.DotNet.Emit {
 
 		SR.MethodInfo GetVarArgMethod(object obj) {
 			if (vamDynamicMethodFieldInfo.Exists(obj)) {
-				// .NET 4.0+
+				// .NET Framework 4.0+
 				var method = vamMethodFieldInfo.Read(obj) as SR.MethodInfo;
 				var dynMethod = vamDynamicMethodFieldInfo.Read(obj) as DynamicMethod;
 				return dynMethod ?? method;
 			}
 			else {
-				// .NET 2.0
+				// .NET Framework 2.0
 				// This is either a DynamicMethod or a MethodInfo
 				return vamMethodFieldInfo.Read(obj) as SR.MethodInfo;
 			}
@@ -532,6 +533,15 @@ namespace dnlib.DotNet.Emit {
 			if (index >= (uint)tokens.Count)
 				return null;
 			return tokens[(int)index];
+		}
+
+		/// <inheritdoc />
+		public override void RestoreMethod(MethodDef method) {
+			base.RestoreMethod(method);
+
+			var body = method.Body;
+			body.InitLocals = initLocals;
+			body.MaxStack = (ushort)Math.Min(maxStack, ushort.MaxValue);
 		}
 
 		ITypeDefOrRef ISignatureReaderHelper.ResolveTypeDefOrRef(uint codedToken, GenericParamContext gpContext) {
