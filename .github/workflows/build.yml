@@ -57,7 +57,7 @@ jobs:
       - name: Add github source to nuget
         shell: pwsh
         run: |
-          dotnet nuget add source --username ankurmay1988 --password ${{ secrets.NUGETPACKAGEPAT }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/OWNER/index.json"
+          dotnet nuget add source --username ankurmay1988 --password ${{ secrets.NUGETPACKAGEPAT }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/ankurmay1988/index.json"
 
       - name: Upload to nuget.org if it's a new release
         if: startsWith(github.ref, 'refs/tags/')
