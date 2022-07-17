@@ -19,6 +19,7 @@
     <InformationalVersion>$(Version)</InformationalVersion>
     <Authors>0xd4d</Authors>
     <PackageProjectUrl>https://github.com/0xd4d/dnlib</PackageProjectUrl>
+	  <RepositoryUrl>https://github.com/ankurmay1988/dnlib</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageVersion>$(InformationalVersion)</PackageVersion>
     <PackageTags>dotnet;assembly;module;reader;writer;PDB;PortablePdb;WindowsPdb;IL;CIL;MSIL;metadata</PackageTags>
